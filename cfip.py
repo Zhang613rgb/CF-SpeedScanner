@@ -505,7 +505,7 @@ def clear_cache(cache_dir=None):
     state.set_progress("缓存已清除")
 
 
-def git_commit_push(repo_dir, files, msg="更新优选 IP"):
+def git_commit_push(repo_dir, files, msg="."):
     """提交文件并推送到 GitHub"""
     import subprocess
     try:
@@ -617,18 +617,25 @@ def main():
         print("无有效 IP", file=sys.stderr)
         sys.exit(1)
 
-    # 输出到文件
-    repo_dir = Path(args.repo) if args.repo else SCRIPT_DIR
-    repo_dir.mkdir(parents=True, exist_ok=True)
-    out_dir = repo_dir / "speedtest" / "output"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "cfyd.txt"
-    out_path.write_text("\n".join(all_lines))
-    print(f"\n[*] 共 {args.count} 个 IP → {len(all_lines)} 条节点 → {out_path}")
+    # 输出到脚本目录 output/as.txt
+    local_out_dir = SCRIPT_DIR / "output"
+    local_out_dir.mkdir(parents=True, exist_ok=True)
+    local_out_path = local_out_dir / "as.txt"
+    local_out_path.write_text("\n".join(all_lines))
+    print(f"\n[*] 共 {len(all_lines)} 条节点 → {local_out_path}")
 
-    # 自动推送到 GitHub
-    if args.push and args.repo:
-        git_commit_push(args.repo, [str(out_path.relative_to(args.repo))], f"更新优选 IP ({len(scanned)} 个)")
+    # 输出到仓库目录用于 git push
+    if args.repo:
+        repo_dir = Path(args.repo)
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = repo_dir / "speedtest" / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "cfyd.txt"
+        out_path.write_text("\n".join(all_lines))
+        print(f"[*] 同步至仓库 → {out_path}")
+
+        if args.push:
+            git_commit_push(args.repo, ["speedtest/output/cfyd.txt"], ".")
 
 
 if __name__ == "__main__":
