@@ -23,6 +23,11 @@ jobs:
       - name: 创建结果目录
         run: mkdir -p speedtest/output
 
+      - name: 配置 git 身份
+        run: |
+          git config user.name "anonymous"
+          git config user.email "anonymous@anon.net"
+
       - name: 扫描优选 IP
         run: |
           python cfip.py scan -n 3 -b 5 --repo $GITHUB_WORKSPACE --push
