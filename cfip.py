@@ -627,15 +627,14 @@ def main():
     # 输出到仓库目录用于 git push
     if args.repo:
         repo_dir = Path(args.repo)
-        repo_dir.mkdir(parents=True, exist_ok=True)
-        out_dir = repo_dir / "speedtest" / "output"
+        out_dir = repo_dir / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "cfyd.txt"
+        out_path = out_dir / "as.txt"
         out_path.write_text("\n".join(all_lines))
         print(f"[*] 同步至仓库 → {out_path}")
 
         if args.push:
-            git_commit_push(args.repo, ["speedtest/output/cfyd.txt"], ".")
+            git_commit_push(args.repo, ["output/as.txt"], ".")
 
 
 if __name__ == "__main__":
