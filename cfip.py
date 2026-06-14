@@ -414,20 +414,21 @@ def lookup_city(state, dc):
     return state.location_map.get(dc, dc)
 
 
-def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=1280, subnets=None):
+def cloudflare_test(state, count=1, ip_type=4, use_tls=True, task_num=50, speed_target=1280, subnets=None):
     init_locations(state)
     if state.is_cancelled():
-        return "", 0, 0, ""
+        return []
 
     if subnets is None:
         subnets = load_ip_list(state, ip_type)
     state.set_progress(f"正在从 {len(subnets)} 个子网中随机生成 IP...")
 
     sample_size = min(10, len(subnets))
+    results = []
 
-    while True:
+    while len(results) < count:
         if state.is_cancelled():
-            return "", 0, 0, ""
+            return results
 
         sampled = random_sample(subnets, sample_size)
         test_ips = get_random_ipv6s(sampled) if ip_type == 6 else get_random_ipv4s(sampled)
@@ -436,14 +437,17 @@ def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=12
         rtt_results = run_rtt_test(test_ips, state, task_num, use_tls)
 
         if state.is_cancelled():
-            return "", 0, 0, ""
+            return results
         if not rtt_results:
             state.set_progress("当前所有 IP 都存在 RTT 丢包，继续新的 RTT 测试...")
             continue
 
         for ip, rtt in rtt_results:
             if state.is_cancelled():
-                return "", 0, 0, ""
+                return results
+
+            if any(r["ip"] == ip for r in results):
+                continue
 
             state.set_progress(f"正在测速 {ip} (延迟 {rtt}ms)")
             speed, tcp_ms, dc = test_speed(ip, state, use_tls)
@@ -452,12 +456,17 @@ def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=12
             state.set_progress(f"{ip} 峰值速度 {speed} kB/s, 数据中心 {dc_name}")
 
             if speed >= speed_target:
-                return ip, speed, tcp_ms, dc_name
+                results.append({"ip": ip, "maxSpeed": speed, "latencyMs": tcp_ms, "dataCenter": dc_name, "realBandwidth": speed // 128})
+                state.set_progress(f"[{len(results)}/{count}] ✓ {ip} {dc_name}")
+                if len(results) >= count:
+                    return results
 
-        state.set_progress("当前所有 IP 都未达到期望带宽，重新开始新一轮测试...")
+        state.set_progress(f"当前批次的 IP 不够，继续下一批...")
+
+    return results
 
 
-def scan(bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None, progress_callback=None, subnets=None):
+def scan(count=1, bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None, progress_callback=None, subnets=None):
     state = get_state()
     if cache_dir:
         state.cache_dir = Path(cache_dir)
@@ -467,17 +476,7 @@ def scan(bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None
     state.reset()
     speed_target = bandwidth_mbps * 128
 
-    ip, max_speed, latency, dc = cloudflare_test(state, ip_type, use_tls, task_num, speed_target, subnets)
-
-    return {
-        "ip": ip,
-        "bandwidth": bandwidth_mbps,
-        "realBandwidth": max_speed // 128,
-        "maxSpeed": max_speed,
-        "latencyMs": latency,
-        "dataCenter": dc,
-        "error": f"未找到符合 {bandwidth_mbps} Mbps 带宽目标的 IP" if not ip else ""
-    }
+    return cloudflare_test(state, count, ip_type, use_tls, task_num, speed_target, subnets)
 
 
 def update_data(cache_dir=None):
@@ -588,29 +587,24 @@ def main():
             isp_subnets = ["104.16.0.0/13"]
         print(f"[*] {isp_name} CIDR: {len(isp_subnets)} 个段")
 
-        scanned = set()
-        for i in range(args.per_isp):
-            print(f"\n  --- {isp_name} 第 {i+1}/{args.per_isp} 次 ---")
-            result = scan(
-                bandwidth_mbps=args.bandwidth,
-                task_num=args.tasks,
-                use_tls=not args.no_tls,
-                ip_type=6 if args.ipv6 else 4,
-                cache_dir=args.cache_dir,
-                progress_callback=print_progress,
-                subnets=isp_subnets,
-            )
-            if result["ip"]:
-                ip = result["ip"]
-                if ip in scanned:
-                    print(f"  [*] IP {ip} 重复，跳过")
-                    continue
-                scanned.add(ip)
-                port = random.choice(ports)
-                all_lines.append(f"{ip}:{port}#{isp_name}优选-{ip}")
-                print(f"  ✓ {ip}:{port} #{isp_name}")
-            else:
-                print(f"  ✗ 第 {i+1} 次失败: {result['error']}")
+        results = scan(
+            count=args.per_isp,
+            bandwidth_mbps=args.bandwidth,
+            task_num=args.tasks,
+            use_tls=not args.no_tls,
+            ip_type=6 if args.ipv6 else 4,
+            cache_dir=args.cache_dir,
+            progress_callback=print_progress,
+            subnets=isp_subnets,
+        )
+        for r in results:
+            ip = r["ip"]
+            port = random.choice(ports)
+            all_lines.append(f"{ip}:{port}#{isp_name}优选-{ip}")
+            bw = r.get("realBandwidth", 0)
+            dc = r.get("dataCenter", "")
+            print(f"  ✓ {ip}:{port} #{isp_name}  {bw}Mbps {dc}")
+        print(f"  [{len(results)}/{args.per_isp}] 个达标")
 
 
     if not all_lines:
