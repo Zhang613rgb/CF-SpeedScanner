@@ -564,6 +564,7 @@ def main():
             sys.exit(1)
 
     ports = [443, 8443, 2053, 2083, 2087, 2096]
+    isp_labels = {0: '电信', 1: '联通', 2: '移动'}
     all_lines = []
     scanned = set()
 
@@ -584,12 +585,10 @@ def main():
                 continue
             scanned.add(ip)
 
-            dc = f" [{result['dataCenter']}]" if result['dataCenter'] else ""
-            speed_mbps = result['realBandwidth']
-            latency = result['latencyMs']
-            for p in ports:
-                all_lines.append(f"{ip}:{p}#{ip}-{p}{dc} {speed_mbps}Mbps {latency}ms")
-            print(f"✓ {ip} {speed_mbps}Mbps {latency}ms{dc}")
+            isp = isp_labels[(len(scanned) - 1) % 3]
+            port = random.choice(ports)
+            all_lines.append(f"{ip}:{port}#CF{isp}优选 {port}")
+            print(f"✓ {ip}:{port} #{isp}")
         else:
             print(f"✗ 第 {i+1} 次扫描失败: {result['error']}", file=sys.stderr)
             if i == 0:

@@ -30,4 +30,4 @@ jobs:
 
       - name: 扫描优选 IP
         run: |
-          python cfip.py scan -n 3 -b 5 --repo $GITHUB_WORKSPACE --push
+          python cfip.py scan -n 15 -b 5 --repo $GITHUB_WORKSPACE --push
