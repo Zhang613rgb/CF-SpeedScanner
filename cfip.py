@@ -423,7 +423,7 @@ def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=12
         subnets = load_ip_list(state, ip_type)
     state.set_progress(f"正在从 {len(subnets)} 个子网中随机生成 IP...")
 
-    sample_size = min(100, len(subnets))
+    sample_size = min(10, len(subnets))
 
     while True:
         if state.is_cancelled():
