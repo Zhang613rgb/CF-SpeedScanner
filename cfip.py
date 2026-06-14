@@ -414,12 +414,13 @@ def lookup_city(state, dc):
     return state.location_map.get(dc, dc)
 
 
-def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=1280):
+def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=1280, subnets=None):
     init_locations(state)
     if state.is_cancelled():
         return "", 0, 0, ""
 
-    subnets = load_ip_list(state, ip_type)
+    if subnets is None:
+        subnets = load_ip_list(state, ip_type)
     state.set_progress(f"正在从 {len(subnets)} 个子网中随机生成 IP...")
 
     sample_size = min(100, len(subnets))
@@ -456,7 +457,7 @@ def cloudflare_test(state, ip_type=4, use_tls=True, task_num=50, speed_target=12
         state.set_progress("当前所有 IP 都未达到期望带宽，重新开始新一轮测试...")
 
 
-def scan(bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None, progress_callback=None):
+def scan(bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None, progress_callback=None, subnets=None):
     state = get_state()
     if cache_dir:
         state.cache_dir = Path(cache_dir)
@@ -466,7 +467,7 @@ def scan(bandwidth_mbps=10, task_num=50, use_tls=True, ip_type=4, cache_dir=None
     state.reset()
     speed_target = bandwidth_mbps * 128
 
-    ip, max_speed, latency, dc = cloudflare_test(state, ip_type, use_tls, task_num, speed_target)
+    ip, max_speed, latency, dc = cloudflare_test(state, ip_type, use_tls, task_num, speed_target, subnets)
 
     return {
         "ip": ip,
@@ -535,7 +536,7 @@ def main():
     scan_parser = subparsers.add_parser("scan", help="扫描优选 IP")
     scan_parser.add_argument("-b", "--bandwidth", type=int, default=10, help="期望带宽 Mbps (默认 10)")
     scan_parser.add_argument("-t", "--tasks", type=int, default=50, help="并发任务数 (默认 50)")
-    scan_parser.add_argument("-n", "--count", type=int, default=1, help="扫描 IP 数量 (默认 1)")
+    scan_parser.add_argument("--per-isp", type=int, default=5, help="每个运营商扫描 IP 数 (默认 5)")
     scan_parser.add_argument("--no-tls", action="store_true", help="不使用 TLS")
     scan_parser.add_argument("-6", "--ipv6", action="store_true", help="使用 IPv6")
     scan_parser.add_argument("-c", "--cache-dir", type=str, help="缓存目录")
@@ -564,35 +565,53 @@ def main():
             sys.exit(1)
 
     ports = [443, 8443, 2053, 2083, 2087, 2096]
-    isp_labels = {0: '电信', 1: '联通', 2: '移动'}
+    isp_configs = [
+        ("ct",    "电信", "https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/ct.txt"),
+        ("cu",    "联通", "https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/cu.txt"),
+        ("cmcc", "移动", "https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/cmcc.txt"),
+    ]
     all_lines = []
-    scanned = set()
+    state = get_state()
+    if args.cache_dir:
+        state.cache_dir = Path(args.cache_dir)
+    init_locations(state)
 
-    for i in range(args.count):
-        print(f"\n{'='*40}\n第 {i+1}/{args.count} 次扫描\n{'='*40}")
-        result = scan(
-            bandwidth_mbps=args.bandwidth,
-            task_num=args.tasks,
-            use_tls=not args.no_tls,
-            ip_type=6 if args.ipv6 else 4,
-            cache_dir=args.cache_dir,
-            progress_callback=print_progress
-        )
-        if result["ip"]:
-            ip = result["ip"]
-            if ip in scanned:
-                print(f"[*] IP {ip} 已存在，跳过")
-                continue
-            scanned.add(ip)
+    for isp_key, isp_name, cidr_url in isp_configs:
+        print(f"\n{'='*50}\n扫描 {isp_name} 优选 (--per-isp {args.per_isp})\n{'='*50}")
+        # 下载运营商 CIDR
+        try:
+            resp = urllib.request.urlopen(cidr_url, timeout=30)
+            raw = resp.read().decode().strip()
+            isp_subnets = [l.strip() for l in raw.split('\n') if l.strip() and '/' in l]
+        except Exception as e:
+            print(f"[!] 下载 {isp_name} CIDR 失败: {e}")
+            isp_subnets = ["104.16.0.0/13"]
+        print(f"[*] {isp_name} CIDR: {len(isp_subnets)} 个段")
 
-            isp = isp_labels[(len(scanned) - 1) % 3]
-            port = random.choice(ports)
-            all_lines.append(f"{ip}:{port}#CF{isp}优选 {port}")
-            print(f"✓ {ip}:{port} #{isp}")
-        else:
-            print(f"✗ 第 {i+1} 次扫描失败: {result['error']}", file=sys.stderr)
-            if i == 0:
-                sys.exit(1)
+        scanned = set()
+        for i in range(args.per_isp):
+            print(f"\n  --- {isp_name} 第 {i+1}/{args.per_isp} 次 ---")
+            result = scan(
+                bandwidth_mbps=args.bandwidth,
+                task_num=args.tasks,
+                use_tls=not args.no_tls,
+                ip_type=6 if args.ipv6 else 4,
+                cache_dir=args.cache_dir,
+                progress_callback=print_progress,
+                subnets=isp_subnets,
+            )
+            if result["ip"]:
+                ip = result["ip"]
+                if ip in scanned:
+                    print(f"  [*] IP {ip} 重复，跳过")
+                    continue
+                scanned.add(ip)
+                port = random.choice(ports)
+                all_lines.append(f"{ip}:{port}#CF{isp_name}优选 {port}")
+                print(f"  ✓ {ip}:{port} #{isp_name}")
+            else:
+                print(f"  ✗ 第 {i+1} 次失败: {result['error']}")
+
 
     if not all_lines:
         print("无有效 IP", file=sys.stderr)
