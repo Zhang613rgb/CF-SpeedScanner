@@ -607,7 +607,7 @@ def main():
                     continue
                 scanned.add(ip)
                 port = random.choice(ports)
-                all_lines.append(f"{ip}:{port}#CF{isp_name}优选 {port}")
+                all_lines.append(f"{ip}:{port}#{isp_name}优选-{ip}")
                 print(f"  ✓ {ip}:{port} #{isp_name}")
             else:
                 print(f"  ✗ 第 {i+1} 次失败: {result['error']}")
